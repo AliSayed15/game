@@ -1,6 +1,5 @@
 # ============================================================
-#   XO Game - vs AI using BFS Search Algorithm
-#   Difficulty: EASY / MEDIUM / HARD
+#   XO Game - vs AI (Minimax Algorithm)
 #   pip install pygame
 # ============================================================
 
@@ -8,33 +7,32 @@ import pygame
 import sys
 import random
 import math
-from collections import deque
 from enum import Enum, auto
 from typing import Optional, List, Tuple
 
 
 # ── Constants ────────────────────────────────────────────────
-WINDOW_SIZE  = 540
-GRID_SIZE    = 3
-CELL_SIZE    = WINDOW_SIZE // GRID_SIZE
-LINE_WIDTH   = 6
-PIECE_WIDTH  = 10
-RADIUS       = CELL_SIZE // 3
-AI_THINK_MS  = 500
+WINDOW_SIZE   = 540
+GRID_SIZE     = 3
+CELL_SIZE     = WINDOW_SIZE // GRID_SIZE
+LINE_WIDTH    = 6
+PIECE_WIDTH   = 10
+RADIUS        = CELL_SIZE // 3
+AI_THINK_MS   = 500
 
-BG_COLOR     = ( 15,  15,  20)
-LINE_COLOR   = ( 50,  50,  65)
-X_COLOR      = (231,  76,  60)
-O_COLOR      = ( 52, 152, 219)
-WIN_COLOR    = (241, 196,  15)
-TEXT_COLOR   = (236, 240, 241)
-MUTED_COLOR  = (127, 140, 141)
-PANEL_COLOR  = ( 25,  25,  35)
-BTN_COLOR    = ( 44,  62,  80)
-BTN_HOVER    = ( 52,  73,  94)
-EASY_COLOR   = ( 39, 174,  96)
-MED_COLOR    = (230, 126,  34)
-HARD_COLOR   = (192,  57,  43)
+BG_COLOR      = ( 15,  15,  20)
+LINE_COLOR    = ( 50,  50,  65)
+X_COLOR       = (231,  76,  60)
+O_COLOR       = ( 52, 152, 219)
+WIN_COLOR     = (241, 196,  15)
+TEXT_COLOR    = (236, 240, 241)
+MUTED_COLOR   = (127, 140, 141)
+PANEL_COLOR   = ( 25,  25,  35)
+BTN_COLOR     = ( 44,  62,  80)
+BTN_HOVER     = ( 52,  73,  94)
+EASY_COLOR    = ( 39, 174,  96)
+MED_COLOR     = (230, 126,  34)
+HARD_COLOR    = (192,  57,  43)
 
 
 class Difficulty(Enum):
@@ -44,27 +42,21 @@ class Difficulty(Enum):
 
 
 class GameState(Enum):
-    MENU      = auto()
-    PLAYING   = auto()
-    AI_THINK  = auto()
-    GAME_OVER = auto()
+    MENU       = auto()
+    PLAYING    = auto()
+    AI_THINK   = auto()
+    GAME_OVER  = auto()
 
 
 # ── Board Logic ──────────────────────────────────────────────
 
 class Board:
-    EMPTY = 0
-    HUMAN = 1    # X
-    AI    = -1   # O
+    EMPTY  = 0
+    HUMAN  = 1
+    AI     = -1
 
-    def __init__(self, cells=None):
-        if cells is None:
-            self.cells: List[List[int]] = [[self.EMPTY]*3 for _ in range(3)]
-        else:
-            self.cells = [row[:] for row in cells]
-
-    def clone(self) -> "Board":
-        return Board(self.cells)
+    def __init__(self):
+        self.cells: List[List[int]] = [[self.EMPTY]*3 for _ in range(3)]
 
     def reset(self):
         self.cells = [[self.EMPTY]*3 for _ in range(3)]
@@ -74,6 +66,9 @@ class Board:
             self.cells[row][col] = player
             return True
         return False
+
+    def undo_move(self, row: int, col: int):
+        self.cells[row][col] = self.EMPTY
 
     def get_empty_cells(self) -> List[Tuple[int, int]]:
         return [(r, c) for r in range(3) for c in range(3)
@@ -115,42 +110,8 @@ class Board:
         return all(self.cells[r][c] != self.EMPTY
                    for r in range(3) for c in range(3))
 
-    def to_tuple(self) -> tuple:
-        return tuple(self.cells[r][c] for r in range(3) for c in range(3))
 
-    def evaluate(self) -> int:
-        """
-        تقييم جودة الحالة للـ AI:
-          +10  فوز AI
-          -10  فوز HUMAN
-          +3   AI في المركز
-          +1   AI في الزاوية
-        """
-        winner = self.check_winner()
-        if winner == self.AI:    return 10
-        if winner == self.HUMAN: return -10
-
-        score = 0
-        if self.cells[1][1] == self.AI:    score += 3
-        if self.cells[1][1] == self.HUMAN: score -= 3
-        for r, c in [(0,0),(0,2),(2,0),(2,2)]:
-            if self.cells[r][c] == self.AI:    score += 1
-            if self.cells[r][c] == self.HUMAN: score -= 1
-        return score
-
-
-# ── AI using BFS ──────────────────────────────────────────────
-#
-#  BFS (Breadth-First Search):
-#  بيبحث في شجرة الحالات طبقة طبقة (level by level).
-#  بيلاقي أسرع طريق للفوز لأنه بيستكشف الحركات القريبة الأول.
-#
-#  التحكم في الصعوبة:
-#  - EASY:   عشوائي 100%  (BFS معطّل)
-#  - MEDIUM: 50% BFS + 50% عشوائي  (بيغلط أحياناً)
-#  - HARD:   BFS كامل  (يبحث عن أفضل حركة دايماً)
-#
-# ─────────────────────────────────────────────────────────────
+# ── AI (Minimax + Alpha-Beta) ─────────────────────────────────
 
 class AI:
     def __init__(self, difficulty: Difficulty):
@@ -160,67 +121,49 @@ class AI:
         empty = board.get_empty_cells()
         if not empty:
             return (-1, -1)
-
-        # EASY: عشوائي بالكامل
         if self.difficulty == Difficulty.EASY:
             return random.choice(empty)
-
-        # MEDIUM: نص الوقت عشوائي ونص BFS
         if self.difficulty == Difficulty.MEDIUM:
-            if random.random() < 0.5:
+            if random.random() < 0.4:
                 return random.choice(empty)
+        return self._minimax_best(board)
 
-        # HARD (وأحياناً MEDIUM): BFS كامل
-        return self._bfs(board)
-
-    def _bfs(self, board: Board) -> Tuple[int, int]:
-        """
-        BFS على شجرة حالات اللعبة.
-
-        كل Node في الشجرة = حالة اللوحة بعد تسلسل من الحركات.
-        Queue بتحتفظ بـ: (اللوحة الحالية، أول حركة من الجذر، اللاعب الحالي، العمق)
-
-        بنحتفظ بـ first_move عشان في الأخر نعرف
-        أي حركة من الجذر أدّت لأفضل نتيجة.
-        """
-        best_move  = board.get_empty_cells()[0]
+    def _minimax_best(self, board: Board) -> Tuple[int, int]:
         best_score = -math.inf
-        visited    = set()
-
-        # نبدأ بتوليد كل الحركات الممكنة للـ AI من الوضع الحالي
-        queue = deque()
+        best_move  = board.get_empty_cells()[0]
         for (r, c) in board.get_empty_cells():
-            new_board = board.clone()
-            new_board.make_move(r, c, Board.AI)
-            queue.append((new_board, (r, c), Board.HUMAN, 1))
-
-        while queue:
-            cur_board, first_move, player, depth = queue.popleft()
-            state_key = (cur_board.to_tuple(), player)
-
-            if state_key in visited:
-                continue
-            visited.add(state_key)
-
-            winner = cur_board.check_winner()
-
-            # حالة نهائية: قيّم وقارن
-            if winner or cur_board.is_full():
-                # نطرح العمق عشان نُفضّل الفوز الأسرع
-                score = cur_board.evaluate() - depth
-                if score > best_score:
-                    best_score = score
-                    best_move  = first_move
-                continue
-
-            # توليد الحالات التالية (دور الخصم)
-            next_player = Board.HUMAN if player == Board.AI else Board.AI
-            for (r, c) in cur_board.get_empty_cells():
-                nb = cur_board.clone()
-                nb.make_move(r, c, player)
-                queue.append((nb, first_move, next_player, depth + 1))
-
+            board.make_move(r, c, Board.AI)
+            score = self._minimax(board, 0, False, -math.inf, math.inf)
+            board.undo_move(r, c)
+            if score > best_score:
+                best_score = score
+                best_move  = (r, c)
         return best_move
+
+    def _minimax(self, board: Board, depth: int,
+                 is_max: bool, alpha: float, beta: float) -> float:
+        winner = board.check_winner()
+        if winner == Board.AI:    return 10 - depth
+        if winner == Board.HUMAN: return depth - 10
+        if board.is_full():       return 0
+        if is_max:
+            best = -math.inf
+            for (r, c) in board.get_empty_cells():
+                board.make_move(r, c, Board.AI)
+                best = max(best, self._minimax(board, depth+1, False, alpha, beta))
+                board.undo_move(r, c)
+                alpha = max(alpha, best)
+                if beta <= alpha: break
+            return best
+        else:
+            best = math.inf
+            for (r, c) in board.get_empty_cells():
+                board.make_move(r, c, Board.HUMAN)
+                best = min(best, self._minimax(board, depth+1, True, alpha, beta))
+                board.undo_move(r, c)
+                beta = min(beta, best)
+                if beta <= alpha: break
+            return best
 
 
 # ── Renderer ─────────────────────────────────────────────────
@@ -238,21 +181,19 @@ class Renderer:
     def _cx(self, surf: pygame.Surface) -> int:
         return (WINDOW_SIZE - surf.get_width()) // 2
 
-    # ── Menu ─────────────────────────────────────────────────
-
     def draw_menu(self, hovered: Optional[str]):
         self.screen.fill(BG_COLOR)
 
         title = self.font_xl.render("X  O", True, TEXT_COLOR)
-        self.screen.blit(title, (self._cx(title), 40))
+        self.screen.blit(title, (self._cx(title), 55))
 
-        sub = self.font_md.render("Play Against AI  (BFS Algorithm)", True, MUTED_COLOR)
-        self.screen.blit(sub, (self._cx(sub), 112))
+        sub = self.font_md.render("Play Against the AI", True, MUTED_COLOR)
+        self.screen.blit(sub, (self._cx(sub), 125))
 
         levels = [
-            ("EASY",   "easy",   EASY_COLOR, 195),
-            ("MEDIUM", "medium", MED_COLOR,  285),
-            ("HARD",   "hard",   HARD_COLOR, 375),
+            ("EASY",   "easy",   EASY_COLOR, 210),
+            ("MEDIUM", "medium", MED_COLOR,  300),
+            ("HARD",   "hard",   HARD_COLOR, 390),
         ]
         for label, key, color, y in levels:
             rect = pygame.Rect(WINDOW_SIZE//2 - 130, y, 260, 60)
@@ -265,18 +206,13 @@ class Renderer:
                                    rect.centery - txt.get_height()//2))
 
         hint = self.font_sm.render("Choose difficulty to start", True, MUTED_COLOR)
-        self.screen.blit(hint, (self._cx(hint), 462))
-
-        hint2 = self.font_sm.render("You are X   |   AI is O", True, MUTED_COLOR)
-        self.screen.blit(hint2, (self._cx(hint2), 484))
+        self.screen.blit(hint, (self._cx(hint), 480))
 
     def get_menu_btn(self, pos) -> Optional[str]:
-        for key, y in [("easy", 195), ("medium", 285), ("hard", 375)]:
+        for key, y in [("easy", 210), ("medium", 300), ("hard", 390)]:
             if pygame.Rect(WINDOW_SIZE//2 - 130, y, 260, 60).collidepoint(pos):
                 return key
         return None
-
-    # ── Game ─────────────────────────────────────────────────
 
     def draw_game(self, board: Board, state: GameState,
                   winner: Optional[int], difficulty: Difficulty,
@@ -325,7 +261,6 @@ class Renderer:
     def _draw_panel(self, difficulty: Difficulty, score: dict,
                     state: GameState, winner: Optional[int], thinking: bool):
         Y = WINDOW_SIZE
-
         diff_info = {
             Difficulty.EASY:   ("EASY",   EASY_COLOR),
             Difficulty.MEDIUM: ("MEDIUM", MED_COLOR),
@@ -333,39 +268,36 @@ class Renderer:
         }
         diff_name, diff_color = diff_info[difficulty]
 
-        # Level + algorithm badge
-        badge = self.font_sm.render(f"Level: {diff_name}   |   AI: BFS", True, diff_color)
-        self.screen.blit(badge, (20, Y + 14))
+        lvl = self.font_sm.render(f"Level: {diff_name}", True, diff_color)
+        self.screen.blit(lvl, (20, Y + 14))
 
-        # Score
         sc = self.font_sm.render(
             f"You: {score['human']}   Draw: {score['draw']}   AI: {score['ai']}",
             True, MUTED_COLOR)
         self.screen.blit(sc, (20, Y + 36))
 
-        # Main message
         if thinking:
-            msg, color = "AI (BFS) is thinking...  [*]", diff_color
+            msg, color = "AI is thinking...  o_O", O_COLOR
         elif state == GameState.GAME_OVER:
             if winner == Board.HUMAN:
-                msg, color = "You Win!   \\(^o^)/", EASY_COLOR
+                msg, color = "You Win!  \\(^o^)/", EASY_COLOR
             elif winner == Board.AI:
-                msg, color = "AI Wins!   (>_<)", HARD_COLOR
+                msg, color = "AI Wins!  (>_<)", HARD_COLOR
             else:
-                msg, color = "Draw!   (-_-)", MED_COLOR
+                msg, color = "Draw!  (-_-)", MED_COLOR
         else:
-            msg, color = "Your turn!  Click a cell.", TEXT_COLOR
+            msg, color = "Your turn! Click a cell.", TEXT_COLOR
 
         msg_surf = self.font_lg.render(msg, True, color)
-        self.screen.blit(msg_surf, (self._cx(msg_surf), Y + 62))
+        self.screen.blit(msg_surf, (self._cx(msg_surf), Y + 65))
 
         self._draw_bottom_btns()
 
     def _draw_bottom_btns(self):
         mouse = pygame.mouse.get_pos()
         Y = WINDOW_SIZE
-        btn_r = pygame.Rect(WINDOW_SIZE//2 + 10,  Y + 110, 155, 36)
-        btn_m = pygame.Rect(WINDOW_SIZE//2 - 170, Y + 110, 155, 36)
+        btn_r = pygame.Rect(WINDOW_SIZE//2 + 10,  Y + 110, 155, 38)
+        btn_m = pygame.Rect(WINDOW_SIZE//2 - 170, Y + 110, 155, 38)
         for btn, label in [(btn_r, "New Game  [R]"), (btn_m, "[M]  Menu")]:
             hover = btn.collidepoint(mouse)
             pygame.draw.rect(self.screen, BTN_HOVER if hover else BTN_COLOR,
@@ -377,8 +309,8 @@ class Renderer:
 
     def get_game_btn(self, pos) -> Optional[str]:
         Y = WINDOW_SIZE
-        if pygame.Rect(WINDOW_SIZE//2 + 10,  Y + 110, 155, 36).collidepoint(pos): return "restart"
-        if pygame.Rect(WINDOW_SIZE//2 - 170, Y + 110, 155, 36).collidepoint(pos): return "menu"
+        if pygame.Rect(WINDOW_SIZE//2 + 10,  Y + 110, 155, 38).collidepoint(pos): return "restart"
+        if pygame.Rect(WINDOW_SIZE//2 - 170, Y + 110, 155, 38).collidepoint(pos): return "menu"
         return None
 
 
@@ -389,14 +321,14 @@ class XOGame:
 
     def __init__(self):
         pygame.init()
-        pygame.display.set_caption("XO  -  BFS AI")
+        pygame.display.set_caption("XO  -  vs AI")
         self.screen    = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE + self.PANEL_H))
         self.clock     = pygame.time.Clock()
         self.renderer  = Renderer(self.screen)
         self.board     = Board()
         self.ai        = AI(Difficulty.HARD)
-        self.difficulty     = Difficulty.HARD
         self.state     = GameState.MENU
+        self.difficulty     = Difficulty.HARD
         self.winner: Optional[int] = None
         self.score          = {"human": 0, "ai": 0, "draw": 0}
         self.ai_think_timer = 0
@@ -492,4 +424,4 @@ class XOGame:
 # ── Run ───────────────────────────────────────────────────────
 if __name__ == "__main__":
     game = XOGame()
-    game.run()
+    game.run()     
